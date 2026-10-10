@@ -1,3 +1,0 @@
-/home/sickarion/sentinel-mesh-ops/build-tsan/CMakeFiles/seqlock_tsan_test.dir
-/home/sickarion/sentinel-mesh-ops/build-tsan/CMakeFiles/edit_cache.dir
-/home/sickarion/sentinel-mesh-ops/build-tsan/CMakeFiles/rebuild_cache.dir
