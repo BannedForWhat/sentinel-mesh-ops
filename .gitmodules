@@ -1,0 +1,6 @@
+[submodule "submodules/amdgpu-sentinel"]
+	path = submodules/amdgpu-sentinel
+	url = https://github.com/BannedForWhat/amdgpu-sentinel.git
+[submodule "submodules/prompt-mesh"]
+	path = submodules/prompt-mesh
+	url = https://github.com/BannedForWhat/prompt-mesh.git

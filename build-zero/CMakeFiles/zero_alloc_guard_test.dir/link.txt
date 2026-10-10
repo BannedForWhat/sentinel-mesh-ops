@@ -1,0 +1,1 @@
+/usr/bin/c++ -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free -Wl,--dependency-file=CMakeFiles/zero_alloc_guard_test.dir/link.d CMakeFiles/zero_alloc_guard_test.dir/tests/zero_alloc_guard_test.cpp.o -o zero_alloc_guard_test  -lpthread

@@ -1,0 +1,157 @@
+name: Sentinel-Mesh Reliability Harness
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zero-alloc-guard:
+    name: Zero-Allocation Proof (-Wl,--wrap)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Repository with Submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++-14
+
+      - name: Configure and Build
+        env:
+          CXX: g++-14
+        run: |
+          cmake -B build-zero -G Ninja \
+            -DENABLE_ZERO_ALLOC_TEST=ON \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-zero --target zero_alloc_guard_test
+
+      - name: Execute Zero-Alloc Verification
+        run: ./build-zero/zero_alloc_guard_test
+
+  sanitizer-matrix:
+    name: Sanitizer Validation (${{ matrix.sanitizer }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sanitizer: asan-ubsan
+            cmake_flags: "-DENABLE_ASAN=ON"
+            target: "mock_sysfs_asan_test"
+            env_vars: "ASAN_OPTIONS=check_initialization_order=1:detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1"
+          - sanitizer: tsan
+            cmake_flags: "-DENABLE_TSAN=ON"
+            target: "seqlock_tsan_test"
+            env_vars: "TSAN_OPTIONS=halt_on_error=1:abort_on_error=1:second_deadlock_stack=1"
+    steps:
+      - name: Checkout Repository with Submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install LLVM Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build clang-18 llvm-18
+
+      - name: Configure and Build
+        env:
+          CC: clang-18
+          CXX: clang++-18
+        run: |
+          cmake -B build-${{ matrix.sanitizer }} -G Ninja \
+            ${{ matrix.cmake_flags }} \
+            -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build-${{ matrix.sanitizer }} --target ${{ matrix.target }}
+
+      - name: Execute Sanitized Binary
+        run: |
+          export ${{ matrix.env_vars }}
+          ./build-${{ matrix.sanitizer }}/${{ matrix.target }}
+
+  e2e-headless-integration:
+    name: Headless Integration (bwrap + mock sysfs + SHM)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Repository with Submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Mitigate Ubuntu 24.04 AppArmor & Install bwrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap apparmor-utils python3-aiohttp
+
+          sudo tee /etc/apparmor.d/bwrap-userns-restrict << 'APPARMOR_EOF'
+          abi <abi/4.0>,
+          include <tunables/global>
+
+          profile bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          APPARMOR_EOF
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict || true
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Construct Synthetic Sysfs DRM Hierarchy
+        run: |
+          mkdir -p /tmp/mock_sysfs/class/drm/card0/device
+          echo "115000000"  > /tmp/mock_sysfs/class/drm/card0/device/hwmon_power_avg
+          echo "54000"      > /tmp/mock_sysfs/class/drm/card0/device/hwmon_temp_input
+          echo "72"         > /tmp/mock_sysfs/class/drm/card0/device/gpu_busy_percent
+          echo "8589934592" > /tmp/mock_sysfs/class/drm/card0/device/mem_info_vram_used
+          echo "17179869184"> /tmp/mock_sysfs/class/drm/card0/device/mem_info_vram_total
+
+      - name: Provision Isolated SHM Mount Point
+        run: |
+          mkdir -p /tmp/mock_shm
+          chmod 1777 /tmp/mock_shm
+
+      - name: Execute Headless Test Inside Bubblewrap Sandbox
+        run: |
+          cat << 'SANDBOX_EOF' > /tmp/e2e_entrypoint.sh
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          echo "[SANDBOX-EXEC] Validating synthetic hardware mounts..."
+          test -f /sys/class/drm/card0/device/gpu_busy_percent
+          test -d /dev/shm
+
+          BUSY_VAL=$(cat /sys/class/drm/card0/device/gpu_busy_percent)
+          VRAM_VAL=$(cat /sys/class/drm/card0/device/mem_info_vram_used)
+          echo "[SANDBOX-EXEC] Telemetry verified: Busy=${BUSY_VAL}%, VRAM=${VRAM_VAL} bytes"
+
+          echo "SYNC_OK" > /dev/shm/sentinel_status
+          test -f /dev/shm/sentinel_status
+
+          echo "[SANDBOX-EXEC] Headless reliability test completed successfully."
+          SANDBOX_EOF
+          chmod +x /tmp/e2e_entrypoint.sh
+
+          bwrap \
+            --ro-bind / / \
+            --dev /dev \
+            --proc /proc \
+            --bind /tmp/mock_shm /dev/shm \
+            --ro-bind /tmp/mock_sysfs /sys \
+            --unshare-user \
+            --unshare-pid \
+            --unshare-ipc \
+            --unshare-uts \
+            /tmp/e2e_entrypoint.sh

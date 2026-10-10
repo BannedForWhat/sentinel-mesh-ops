@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/sickarion/sentinel-mesh-ops/build-zero/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

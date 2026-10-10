@@ -1,0 +1,3 @@
+/home/sickarion/sentinel-mesh-ops/build-zero/CMakeFiles/zero_alloc_guard_test.dir
+/home/sickarion/sentinel-mesh-ops/build-zero/CMakeFiles/edit_cache.dir
+/home/sickarion/sentinel-mesh-ops/build-zero/CMakeFiles/rebuild_cache.dir
